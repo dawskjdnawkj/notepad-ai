@@ -1,0 +1,33 @@
+{
+  "name": "notepadweb",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "@wangeditor/editor": "^5.1.12",
+    "@wangeditor/editor-for-vue": "^5.1.12",
+    "axios": "^1.19.0",
+    "element-plus": "^2.14.4",
+    "markdown-it": "^14.3.0",
+    "pinia": "^4.0.2",
+    "turndown": "^7.2.4",
+    "vue": "^3.5.40",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^24.13.3",
+    "@types/turndown": "^5.0.6",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/tsconfig": "^0.9.1",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0",
+    "vue-tsc": "^3.3.8"
+  }
+}
