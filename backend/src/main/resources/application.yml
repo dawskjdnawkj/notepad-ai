@@ -1,0 +1,137 @@
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+logging:
+  pattern:
+    # 每条后端日志都带 requestId；非 HTTP 后台任务显示为 "-"。
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level requestId=%X{requestId:--} [%thread] %logger{36} - %msg%n"
+
+spring:
+  application:
+    name: notepad-backend
+
+  ai:
+    dashscope:
+      api-key: ${AI_DASHSCOPE_API_KEY}
+      chat:
+        options:
+          model: qwen-plus
+          temperature: 0.7
+      embedding:
+        options:
+          model: text-embedding-v4
+          dimensions: 1024
+
+
+  mail:
+      host: smtp.qq.com
+      port: 465
+      username: ${MAIL_USERNAME}
+      password: ${MAIL_PASSWORD}
+      protocol: smtps
+      default-encoding: UTF-8
+      properties:
+        mail:
+          smtp:
+            auth: true
+            ssl:
+              enable: true
+
+  datasource:
+      url: jdbc:mysql://127.0.0.1:3306/cloud_notepad?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+      username: ${DB_USERNAME}
+      password: ${DB_PASSWORD}
+      driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jackson:
+    time-zone: GMT+8
+    date-format: yyyy-MM-dd HH:mm:ss
+
+  # 文件上传大小限制（图片）
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 20MB
+
+# JWT 配置必须是顶层 jwt.*，与 JwtProperties 的 @ConfigurationProperties(prefix = "jwt") 对应
+jwt:
+  secret: ${JWT_SECRET}
+  expire-days: 7
+
+# 图片上传目录（保存到服务器磁盘，URL 通过 /uploads/** 访问）
+# 相对路径按后端模块解析，最终落到 backend/uploads；
+# 生产环境用 NOTEPAD_UPLOAD_DIR 指到服务器上的绝对路径，例如 /root/uploads
+upload:
+  dir: ${NOTEPAD_UPLOAD_DIR:./uploads}
+
+# 百炼 RAG 请求会携带多个笔记片段，需要比普通短问答更长的读取等待时间
+notepad:
+  ai:
+    vector-store-file: ${NOTEPAD_VECTOR_STORE_FILE:./data/simple-vector-store.json}
+    # 索引备份保留份数；超出后按最旧优先删除，不影响正在使用的索引文件
+    backup-retention: ${NOTEPAD_INDEX_BACKUP_RETENTION:10}
+    # 向量存储选型。默认 simple（进程内 SimpleVectorStore），
+    # 切到 pgvector 需要额外跑一个带 pgvector 扩展的 PostgreSQL 实例。
+    vector-store:
+      type: ${NOTEPAD_VECTOR_STORE_TYPE:simple}
+      # 必须与上面的 spring.ai.dashscope.embedding.options.dimensions 一致
+      dimensions: 1024
+      pgvector:
+        table-name: vector_store
+        schema-name: public
+        # NONE | IVFFLAT | HNSW。对比实验的基线用 NONE（与 SimpleVectorStore 等价的精确检索）
+        index-type: ${NOTEPAD_PGVECTOR_INDEX_TYPE:NONE}
+        initialize-schema: true
+        max-document-batch-size: 500
+        datasource:
+          url: ${NOTEPAD_PGVECTOR_URL:jdbc:postgresql://localhost:5433/notepad_vector}
+          username: ${NOTEPAD_PGVECTOR_USERNAME:postgres}
+          # 无默认值：密码只从环境变量注入
+          password: ${NOTEPAD_PGVECTOR_PASSWORD:}
+          driver-class-name: org.postgresql.Driver
+          hikari:
+            maximum-pool-size: 4
+            minimum-idle: 1
+            connection-timeout: 5000
+    # 编辑器自动保存间隔为 700ms；连续编辑停止 5 秒后再更新向量，减少重复调用
+    sync-delay: 5s
+    http:
+      connect-timeout: 10s
+      read-timeout: 120s
+      # 流式调用走 WebClient，不使用上面的同步读取超时
+      stream-timeout: 150s
+    concurrency:
+      # 对话模型请求的全局并发上限；单用户限制可防止重复点击占满配额
+      global-max: 4
+      per-user-max: 1
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# Knife4j / OpenAPI
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+  group-configs:
+    - group: default
+      paths-to-match: /api/**
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
