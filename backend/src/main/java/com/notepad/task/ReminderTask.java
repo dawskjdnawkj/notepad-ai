@@ -15,8 +15,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -26,6 +29,9 @@ import java.util.List;
 @Component
 @RequiredArgsConstructor
 public class ReminderTask {
+
+    /** 通知标题列宽（notification.title 为 VARCHAR(100)） */
+    private static final int NOTIFICATION_TITLE_MAX = 100;
 
     private final ReminderMapper reminderMapper;
     private final NoteMapper noteMapper;
@@ -44,11 +50,11 @@ public class ReminderTask {
             return;
         }
         LocalDateTime now = LocalDateTime.now();
+        // 邮件是不可回滚的外部副作用，攒到事务提交后再发：
+        // 否则一旦事务回滚（例如某条插入失败），已经发出去的信会在下一分钟被重复发送
+        List<Runnable> pendingMails = new ArrayList<>();
         for (Reminder reminder : due) {
             Note note = noteMapper.selectById(reminder.getNoteId());
-            String title = note != null && note.getTitle() != null && !note.getTitle().isBlank()
-                    ? "提醒：" + note.getTitle()
-                    : "提醒";
             reminder.setStatus(1);
             reminder.setNotifiedAt(now);
             reminderMapper.updateById(reminder);
@@ -56,15 +62,39 @@ public class ReminderTask {
             Notification notification = new Notification();
             notification.setUserId(reminder.getUserId());
             notification.setType(1);
-            notification.setTitle(title);
+            notification.setTitle(buildNotificationTitle(note));
             notification.setContent("该查看你的笔记了");
             notification.setNoteId(reminder.getNoteId());
             notification.setIsRead(0);
             notificationMapper.insert(notification);
 
-            sendReminderEmail(reminder, note);
+            // note 可能为 null（笔记已被删除）：保持原有行为，仍发信，由 sendReminderEmail 兜底
+            pendingMails.add(() -> sendReminderEmail(reminder, note));
+        }
+        if (!pendingMails.isEmpty() && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    pendingMails.forEach(Runnable::run);
+                }
+            });
         }
         log.info("提醒扫描完成，本次处理 {} 条", due.size());
+    }
+
+    /**
+     * 通知标题列是 VARCHAR(100)，而笔记标题最长 200（见 NoteRenameRequest 的 @Size(max=200)）。
+     * 直接拼接最长 203 字符，在开了 STRICT_TRANS_TABLES 的 MySQL 上会让 insert 直接报错，
+     * 而整个扫描是同一个事务 —— 一条超长标题就能让整批提醒回滚、且每分钟重复触发。
+     */
+    private String buildNotificationTitle(Note note) {
+        if (note == null || note.getTitle() == null || note.getTitle().isBlank()) {
+            return "提醒";
+        }
+        String title = "提醒：" + note.getTitle();
+        return title.length() > NOTIFICATION_TITLE_MAX
+                ? title.substring(0, NOTIFICATION_TITLE_MAX)
+                : title;
     }
 
     /**

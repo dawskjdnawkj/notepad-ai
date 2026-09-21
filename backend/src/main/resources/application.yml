@@ -41,6 +41,13 @@ spring:
             auth: true
             ssl:
               enable: true
+            # JavaMail 的超时默认是「无限等待」，Spring Boot 不会替你设。
+            # 不设的话，SMTP 一旦连得上却不响应，调用线程会永久阻塞：
+            # 发验证码走的是请求线程，20 个 Tomcat 线程被占满后全站不可用；
+            # 提醒邮件跑在定时任务的事务里，会把数据库连接一起拖住。
+            connectiontimeout: 5000
+            timeout: 10000
+            writetimeout: 10000
 
   datasource:
       url: jdbc:mysql://127.0.0.1:3306/cloud_notepad?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
