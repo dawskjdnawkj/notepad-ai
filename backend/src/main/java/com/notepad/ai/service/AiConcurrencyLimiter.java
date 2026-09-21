@@ -7,6 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 限制对话模型的并发调用，避免突发请求把本地线程池或百炼配额耗尽。
@@ -37,14 +38,28 @@ public class AiConcurrencyLimiter {
         }
 
         long counterKey = userId == null ? -1L : userId;
-        AtomicInteger counter = userCounters.computeIfAbsent(counterKey, ignored -> new AtomicInteger());
-        int current = counter.incrementAndGet();
-        if (current > perUserMax) {
-            releaseCounter(counterKey, counter);
+        AtomicBoolean overLimit = new AtomicBoolean(false);
+        AtomicReference<AtomicInteger> holder = new AtomicReference<>();
+        // 判定与自增必须在同一个 compute 内完成。写在 compute 外面
+        // （computeIfAbsent 拿到计数器再 incrementAndGet）会与 releaseCounter 的
+        // 「减到 0 就 remove」交叉：remove 可能把另一个线程刚拿到并已自增到 1 的计数器摘掉，
+        // 下一个请求就会新建计数器再次放行，同一个用户短暂持有 2 个许可；
+        // 同时 activeCount() 少算，会让守恒律出现假阳性。
+        userCounters.compute(counterKey, (key, existing) -> {
+            AtomicInteger counter = existing != null ? existing : new AtomicInteger();
+            if (counter.incrementAndGet() > perUserMax) {
+                int left = counter.decrementAndGet();
+                overLimit.set(true);
+                return left == 0 ? null : counter;
+            }
+            holder.set(counter);
+            return counter;
+        });
+        if (overLimit.get()) {
             globalSemaphore.release();
             return null;
         }
-        return new Permit(counterKey, counter);
+        return new Permit(counterKey, holder.get());
     }
 
     public int activeCount() {
@@ -91,9 +106,12 @@ public class AiConcurrencyLimiter {
         }
     }
 
+    /**
+     * 同一个 compute 内完成「递减 + 减到 0 即删」，保证 map 里不会残留 count==0 的条目。
+     * {@code existing == counter} 的身份检查同时挡住「该 key 已被新一轮请求重建」时误减别人的计数器。
+     */
     private void releaseCounter(long counterKey, AtomicInteger counter) {
-        if (counter.decrementAndGet() == 0) {
-            userCounters.remove(counterKey, counter);
-        }
+        userCounters.computeIfPresent(counterKey, (key, existing) ->
+                existing == counter && existing.decrementAndGet() == 0 ? null : existing);
     }
 }

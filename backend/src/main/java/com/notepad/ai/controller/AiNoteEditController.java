@@ -151,7 +151,8 @@ public class AiNoteEditController {
         catch (RuntimeException error) {
             if (hasCause(error, RejectedExecutionException.class)) {
                 response.setHeader("Retry-After", "2");
-                metricsService.recordQueueRejected();
+                // 不在这里计数：completeWithError 会按 outcome 统一记一次，
+                // 两处都记会让 rejectedQueue 翻倍（AiStreamController 也只在那边记）
             }
             completeWithError(emitter, error, trace);
         }
