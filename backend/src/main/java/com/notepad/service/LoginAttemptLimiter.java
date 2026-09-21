@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 登录失败限流（内存存储）。
@@ -26,6 +27,9 @@ public class LoginAttemptLimiter {
     /** 条目数超过该值时触发一次惰性清扫，防止攻击者用海量随机用户名撑爆内存 */
     private static final int PURGE_THRESHOLD = 10_000;
 
+    /** 两次清扫之间的最小间隔，避免条目多时每次请求都做 O(n) 全表扫描 */
+    private static final long PURGE_INTERVAL_MILLIS = 1000L;
+
     /** 登录接口对 username 没有长度约束，组合键里的用户名必须截断 */
     private static final int MAX_USERNAME_LENGTH = 64;
 
@@ -34,6 +38,9 @@ public class LoginAttemptLimiter {
 
     /** 「单 IP」维度 */
     private final Map<String, Attempt> ipStore = new ConcurrentHashMap<>();
+
+    /** 上次清扫时间，用于给清扫节流 */
+    private final AtomicLong lastPurgeAt = new AtomicLong(0L);
 
     private final int maxPerUserIp;
     private final int maxPerIp;
@@ -52,15 +59,24 @@ public class LoginAttemptLimiter {
     }
 
     /**
-     * 登录前调用。任一维度处于锁定期则抛 429，消息里带上还需等待的分钟数。
+     * 登录前调用：**原子地占一个额度**并判断是否超限，超限抛 429。
      * <p>
-     * 必须在校验密码之前调用，否则锁定期内猜中密码仍能登录。
+     * 计数必须在验密之前完成。拆成「先 check、验密后再 record」两步的话，
+     * 并发的多个请求会全部通过 check（那时计数还是 0），再去各自 BCrypt（50~100ms），
+     * 最后才各自计数 —— 一次突发就能拿到与线程池等量的猜测次数，
+     * 而不是配置的 5 次。这里把「判定 + 占位」收进 ConcurrentHashMap.compute 里一次做完。
      */
-    public void checkAllowed(String username, String ip) {
+    public void tryAcquire(String username, String ip) {
         long now = System.currentTimeMillis();
-        long remaining = Math.max(
-                remainingLockMillis(userIpStore, userIpKey(username, ip), now),
-                remainingLockMillis(ipStore, ipKey(ip), now));
+        purgeIfOversized(userIpStore, now);
+        purgeIfOversized(ipStore, now);
+        // 先判「单 IP」维度：它每个 IP 只有一个条目，而「用户名 + IP」维度会为每个
+        // 新用户名建一条。IP 已经锁定时就直接拒绝、不再建档，否则攻击者用同一 IP
+        // 刷海量随机用户名就能让 userIpStore 无上限增长（容器只有 160m 堆）。
+        long ipRemaining = acquire(ipStore, ipKey(ip), maxPerIp, "ip", now);
+        long remaining = ipRemaining > 0
+                ? ipRemaining
+                : acquire(userIpStore, userIpKey(username, ip), maxPerUserIp, "user-ip", now);
         if (remaining > 0) {
             long minutes = Math.max(1L, (remaining + 59_999L) / 60_000L);
             log.warn("event=auth.login.rejected outcome=rate_limited ip={} remainingMs={}", ip, remaining);
@@ -69,74 +85,72 @@ public class LoginAttemptLimiter {
     }
 
     /**
-     * 登录失败后调用。用户不存在与密码错误都算失败，否则「账号是否存在」会通过
-     * 是否被锁定暴露出去（枚举信号）。
-     */
-    public void recordFailure(String username, String ip) {
-        long now = System.currentTimeMillis();
-        purgeIfOversized(userIpStore, now);
-        purgeIfOversized(ipStore, now);
-        record(userIpStore, userIpKey(username, ip), maxPerUserIp, "user-ip", now);
-        record(ipStore, ipKey(ip), maxPerIp, "ip", now);
-    }
-
-    /**
-     * 登录成功后清零，避免正常用户被自己之前的输入错误误伤。
+     * 登录成功后调用。
      * <p>
-     * IP 维度也一并清零：同一出口 IP（公司 NAT）下的正常登录不该被别人累积的失败拖累。
-     * 主维度「用户名 + IP」不受其他账号登录影响，所以这不构成绕过。
+     * 两个维度处理方式不同，这里是有意为之：
+     * <ul>
+     *   <li>「用户名 + IP」直接清零 —— 攻击者要对某个账号做爆破，得先知道该账号的密码
+     *       才能触发清零，所以不构成绕过；而对误输几次的正常用户，清零是必要的体验。</li>
+     *   <li>「单 IP」只**归还本次占用的那一个额度**，绝不清零 —— 清零会变成绕过手段：
+     *       攻击者注册一个自己的账号，每撞库 19 次就用自己账号成功登录一次把计数抹掉，
+     *       IP 维度就完全失效了。归还一个额度只是抵消本次尝试，不会抹掉之前的失败。</li>
+     * </ul>
      */
-    public void reset(String username, String ip) {
+    public void release(String username, String ip) {
         userIpStore.remove(userIpKey(username, ip));
-        ipStore.remove(ipKey(ip));
+        ipStore.computeIfPresent(ipKey(ip), (k, attempt) -> {
+            if (attempt.count > 0) {
+                attempt.count--;
+            }
+            return attempt;
+        });
     }
 
     // ------------------------------------------------------------------ 内部实现
 
-    private void record(Map<String, Attempt> store, String key, int max, String dimension, long now) {
-        // 复合的读-改-写必须整体放进 compute：ConcurrentHashMap 对同一个 key 持 bin 锁，
-        // 而「先 computeIfAbsent 建 Entry、再在外面判断过期并自增」是两步，无法原子化。
-        // 注意 lambda 里不能再操作同一个 map，否则会死锁。
+    /**
+     * 原子地累加一次尝试并返回需要等待的毫秒数（0 表示放行）。
+     * 判定与自增在同一个 compute 内完成，因此并发请求会依次拿到各自的份额。
+     */
+    private long acquire(Map<String, Attempt> store, String key, int max, String dimension, long now) {
+        AtomicLong rejectRemaining = new AtomicLong(0L);
         store.compute(key, (k, existing) -> {
             Attempt attempt = existing;
             if (attempt == null || attempt.isExpired(now, windowMillis)) {
                 attempt = new Attempt(now);
             }
             if (attempt.lockedUntil > now) {
-                // 锁定期内重复失败既不重复计数也不延长锁定，保证锁定最多一个窗口
+                // 已在锁定期：直接拒绝，既不重复计数也不延长锁定，保证锁定最多一个窗口
+                rejectRemaining.set(attempt.lockedUntil - now);
                 return attempt;
             }
             attempt.count++;
-            if (attempt.count >= max) {
+            if (attempt.count > max) {
                 attempt.count = 0;
                 attempt.windowStartAt = now;
                 attempt.lockedUntil = now + windowMillis;
+                rejectRemaining.set(windowMillis);
                 log.warn("event=auth.login.locked outcome=threshold_reached dimension={} key={} max={}",
                         dimension, key, max);
             }
             return attempt;
         });
-    }
-
-    private long remainingLockMillis(Map<String, Attempt> store, String key, long now) {
-        Attempt attempt = store.get(key);
-        if (attempt == null) {
-            return 0L;
-        }
-        // 惰性过期：读时判断，过期即删。与 VerificationCodeService 一致，不引入后台清理线程
-        if (attempt.isExpired(now, windowMillis)) {
-            store.remove(key, attempt);
-            return 0L;
-        }
-        return attempt.lockedUntil > now ? attempt.lockedUntil - now : 0L;
+        return rejectRemaining.get();
     }
 
     /**
      * 内存上界保护：key 里含用户可控的 username，若攻击者用海量随机用户名各失败一次，
      * 惰性过期会让这些条目再也不被访问、永不回收。写到阈值时整体扫一遍过期项。
+     * <p>
+     * 清扫本身是 O(n)，若每个请求都扫，条目一多攻击者反而能用 CPU 把服务拖住，
+     * 因此按固定间隔节流，最多每秒扫一次。
      */
     private void purgeIfOversized(Map<String, Attempt> store, long now) {
         if (store.size() < PURGE_THRESHOLD) {
+            return;
+        }
+        long last = lastPurgeAt.get();
+        if (now - last < PURGE_INTERVAL_MILLIS || !lastPurgeAt.compareAndSet(last, now)) {
             return;
         }
         store.entrySet().removeIf(entry -> entry.getValue().isExpired(now, windowMillis));

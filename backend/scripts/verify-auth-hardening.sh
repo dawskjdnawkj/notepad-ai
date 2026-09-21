@@ -154,6 +154,9 @@ expect_logins() {
 # ---------------------------------------------------------------- 场景 A
 
 section "场景 A：基线（默认配置）"
+# 先重启一次：既保证本脚本不依赖「外面正好有个后端在跑」，
+# 也保证限流计数是干净的（计数在进程内存里，重启即清零）
+restart_backend
 login
 info "已获取登录态"
 if [ "$(me_status "$AUTH")" = "200" ]; then
@@ -252,7 +255,37 @@ fi
 
 # ---------------------------------------------------------------- 场景 D
 
-section "场景 D：token 吊销（默认配置）"
+section "场景 D：并发突发不能突破阈值"
+info "重启后端，阈值压到 3、窗口 60s、IP 维度放宽到 1000（避免 IP 维度干扰）"
+restart_backend "NOTEPAD_AUTH_LOGIN_ATTEMPT_WINDOW=60s" \
+    "NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_USER_IP=3" \
+    "NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_IP=1000"
+
+info "并发打 15 个错误密码请求，期望只有 3 个真正进入口令校验"
+# 这条断言守的是「计数必须在验密之前原子完成」：如果拆成先 check、验密后再 record，
+# 15 个线程会全部通过 check（那时计数还是 0），一次突发就能拿到 15 次猜测机会。
+CONC_DIR="$(mktemp -d)"
+for i in $(seq 1 15); do
+    (
+        curl -s -o /dev/null -w '%{http_code}\n' -X POST "$BASE_URL/api/auth/login" \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"$NOTEPAD_USER\",\"password\":\"concurrent-wrong\"}" \
+            > "$CONC_DIR/$i.txt"
+    ) &
+done
+wait
+N401="$(cat "$CONC_DIR"/*.txt | grep -c '^401$')"
+N429="$(cat "$CONC_DIR"/*.txt | grep -c '^429$')"
+rm -rf "$CONC_DIR"
+if [ "$N401" -eq 3 ] && [ "$N429" -eq 12 ]; then
+    pass "并发 15 个请求仍只有 3 个拿到口令校验机会（401×3、429×12）"
+else
+    fail "并发下限额被突破：401×$N401、429×$N429（期望 401×3、429×12）"
+fi
+
+# ---------------------------------------------------------------- 场景 E
+
+section "场景 E：token 吊销（默认配置）"
 restart_backend
 
 TOKEN_A="$(login_body "$NOTEPAD_USER" "$NOTEPAD_PASSWORD" | jq -r '.data.token // empty')"

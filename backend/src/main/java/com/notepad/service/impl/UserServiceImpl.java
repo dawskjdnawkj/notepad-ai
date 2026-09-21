@@ -148,29 +148,31 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public LoginResponse login(LoginRequest request, String clientIp) {
-        // 先查锁定：放在验密之前，锁定期内即使密码正确也直接 429。
+        // 先原子占一个额度：放在验密之前，锁定期内即使密码正确也直接 429。
+        // 计数同样在验密之前完成，否则并发突发时多个线程会同时通过检查。
         // 这里不加 @Transactional —— 方法里有 BCrypt 校验（约 50~100ms），
         // 开事务会让整个验密期间占着一条连接，并发登录能直接抽干连接池。
-        loginAttemptLimiter.checkAllowed(request.getUsername(), clientIp);
+        loginAttemptLimiter.tryAcquire(request.getUsername(), clientIp);
 
         User user = userMapper.selectOne(new LambdaQueryWrapper<User>()
                 .eq(User::getUsername, request.getUsername()));
         if (user == null || !passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            // 用户不存在同样计数，否则「不存在的用户名永不锁定」会变成账号是否存在的枚举信号
-            loginAttemptLimiter.recordFailure(request.getUsername(), clientIp);
+            // 失败不再单独记账：tryAcquire 已经占过位了。
+            // 用户不存在同样算一次失败，否则「不存在的用户名永不锁定」会变成账号是否存在的枚举信号。
             log.warn("event=auth.login.rejected username={} ip={} outcome=bad_credentials accountExists={}",
                     request.getUsername(), clientIp, user != null);
             throw new BusinessException(401, "用户名或密码错误");
         }
         if (user.getStatus() == null || user.getStatus() != 1) {
-            // 走到这里说明密码已校验通过，不属于爆破尝试，因此既不计数也不清零
+            // 走到这里说明密码已校验通过，不属于爆破尝试，把额度还回去
+            loginAttemptLimiter.release(request.getUsername(), clientIp);
             log.warn("event=auth.login.rejected userId={} ip={} outcome=account_disabled",
                     user.getId(), clientIp);
             throw new BusinessException(403, "账号已被禁用");
         }
 
-        // 只有真正登录成功才清零，避免正常用户被自己的输入错误累积到锁定
-        loginAttemptLimiter.reset(request.getUsername(), clientIp);
+        // 只有真正登录成功才归还额度
+        loginAttemptLimiter.release(request.getUsername(), clientIp);
 
         int tokenVersion = user.getTokenVersion() == null ? 0 : user.getTokenVersion();
         String token = jwtService.generateToken(user.getId(), tokenVersion);
