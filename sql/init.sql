@@ -15,18 +15,21 @@ USE cloud_notepad;
 
 -- ------------------------------------------------------------
 -- 1. 用户表
+-- token_version 与 sql/upgrade/012_user_token_version.sql 保持一致：
+-- 新库执行本文件，已有库执行那个增量脚本，两条路径的最终结构必须完全相同。
 -- ------------------------------------------------------------
 CREATE TABLE `user` (
-    `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
-    `username`    VARCHAR(32)     NOT NULL                COMMENT '用户名，唯一',
-    `password`    VARCHAR(100)    NOT NULL                COMMENT '密码（BCrypt 密文）',
-    `nickname`    VARCHAR(32)     DEFAULT NULL            COMMENT '昵称',
-    `avatar`      VARCHAR(255)    DEFAULT NULL            COMMENT '头像地址（预留）',
-    `email`       VARCHAR(64)     DEFAULT NULL            COMMENT '邮箱（预留找回密码）',
-    `status`      TINYINT         NOT NULL DEFAULT 1      COMMENT '状态：1 正常 / 0 禁用',
-    `create_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '注册时间',
-    `update_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    `deleted`     TINYINT         NOT NULL DEFAULT 0      COMMENT '逻辑删除：0 正常 / 1 删除',
+    `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `username`      VARCHAR(32)     NOT NULL                COMMENT '用户名，唯一',
+    `password`      VARCHAR(100)    NOT NULL                COMMENT '密码（BCrypt 密文）',
+    `nickname`      VARCHAR(32)     DEFAULT NULL            COMMENT '昵称',
+    `avatar`        VARCHAR(255)    DEFAULT NULL            COMMENT '头像地址（预留）',
+    `email`         VARCHAR(64)     DEFAULT NULL            COMMENT '邮箱（预留找回密码）',
+    `status`        TINYINT         NOT NULL DEFAULT 1      COMMENT '状态：1 正常 / 0 禁用',
+    `token_version` INT             NOT NULL DEFAULT 0      COMMENT 'JWT 版本号：登出/改密码时 +1，使旧 token 立即失效',
+    `create_time`   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '注册时间',
+    `update_time`   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`       TINYINT         NOT NULL DEFAULT 0      COMMENT '逻辑删除：0 正常 / 1 删除',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_username` (`username`),
     UNIQUE KEY `uk_email` (`email`)
