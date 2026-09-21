@@ -1,33 +1,111 @@
 # 云记事本（CloudNotepad）
 
-一个可部署上线的多用户云记事本：笔记分类、标签、全文搜索、回收站、日历视图、定时提醒。
+一个可部署上线的多用户云记事本，内置 **检索增强（RAG）的 AI 助手**：能基于你自己的笔记流式问答并给出引用来源，还能让 AI 直接改写笔记（预览确认后才写回，可一键恢复原文）。
+
+## 在线演示
+
+**http://47.242.4.27:8082** —— 演示账号 `222222` / `222222`（登录页可点击自动填入）
+
+> 部署在一台 1.6G 内存的阿里云服务器上，与另一个项目共存。为了塞进去，JVM 参数、容器内存上限、Tomcat 线程数都做过针对性裁剪，详见 [部署上线指南](./docs/05-部署上线指南.md)。
+
+## 界面
+
+| 笔记编辑 | AI 问答（带引用溯源） |
+|---|---|
+| ![编辑界面](./docs/screenshots/editor.png) | ![AI 问答](./docs/screenshots/ai-qa.png) |
+
+![索引状态](./docs/screenshots/index-status.png)
+
+## 功能
+
+### 笔记
+
+- **富文本编辑**：标题/正文自动保存（700ms 防抖 + 串行保存队列），断网或误关页面时草稿落在 localStorage，下次打开自动恢复
+- **组织方式**：笔记本分组、标签、置顶、分页搜索
+- **全文搜索**：MySQL `ngram` 全文索引，中文分词可用
+- **回收站**：软删除 + 30 天自动清理，支持恢复
+- **日历视图**、**定时提醒**（站内通知 + 邮件）
+- **图片上传**：魔数探测 + 扩展名一致性 + Content-Type 三重校验，落盘名为 UUID
+
+### AI 助手（RAG）
+
+- **索引与检索**：笔记切块后向量化，检索结果按用户过滤，不会串到别人的笔记
+- **流式问答**：SSE 逐字返回，附带**引用来源**（可点击跳转到原笔记）
+- **会话与反馈**：多会话历史，答案可点赞/点踩
+- **回归评测**：把反馈沉淀成评测用例，跑基线对比，量化检索质量变化
+- **AI 编辑笔记**：摘要 / 润色 / 续写 / 提取待办四种能力。**先流式生成预览，用户确认后才写回**，写回前保存原文快照，支持一键回退
+- **索引管理**：索引状态、全量重建、增量同步（编辑后 5 秒防抖）、备份/恢复/校验
+- **向量存储可切换**：默认进程内 `SimpleVectorStore`，可切到 `pgvector`（见 [迁移对比报告](./docs/07-pgvector迁移对比报告.md)）
+
+### 工程化
+
+这些不是 CRUD，是这个项目里真正花时间去啃的部分：
+
+- **登录失败限流**：按「用户名+IP」和「单 IP」两个维度原子计数，锁定优先于验密，不存在的用户名同样计数（不留账号枚举信号）
+- **JWT 服务端吊销**：token 带版本号，登出/改密码/重置密码后旧 token 立即失效，不用等 7 天有效期
+- **全链路追踪**：每个请求一个 `requestId`，日志里带 `event=` 结构化字段，出问题能直接按 id 捞
+- **AI 并发许可守恒**：全局 + 单用户双层限流，并且有断言保证「活跃数 + 可用数 == 上限」，许可泄漏测得出来
+- **索引原子保存与损坏恢复**：写入走临时文件 + 原子替换，保留多份备份，索引损坏时可回退
+- **7 个端到端验收脚本**（`backend/scripts/verify-*.sh`）：每个特性配一个可复跑的验收脚本，覆盖限流、吊销、并发许可、索引恢复、pgvector 迁移等
 
 ## 技术栈
 
-- 后端：Spring Boot 3.3 + MyBatis-Plus + MySQL 8 + JWT（jjwt）+ Knife4j
-- 前端：Vue 3 + Vite + TypeScript + Pinia + Element Plus
-
-## 设计文档
-
-- [01-需求分析](./docs/01-需求分析.md)
-- [02-数据库设计](./docs/02-数据库设计.md)
-- [03-接口设计](./docs/03-接口设计.md)
-
-## 当前功能
-
-- Vue 3 前端：可折叠笔记库、富文本编辑、自动保存、本地草稿恢复、标签筛选、分页搜索、日历、通知和回收站。
-- Spring Boot 后端：多用户数据隔离、JWT 鉴权、图片管理、提醒任务和 30 天回收站清理。
+| 层 | 选型 |
+|---|---|
+| 后端 | Spring Boot 3.3 · Java 17 · MyBatis-Plus · MySQL 8 · jjwt · Knife4j |
+| AI | Spring AI Alibaba（百炼 DashScope）· SimpleVectorStore / pgvector |
+| 前端 | Vue 3 · Vite · TypeScript · Pinia · Element Plus · wangEditor |
+| 部署 | Docker Compose · Nginx |
 
 ## 本地运行
 
-1. 使用 MySQL 8 执行 [sql/init.sql](./sql/init.sql)；已有数据库按顺序执行 [sql/upgrade](./sql/upgrade) 中尚未应用的脚本。
-2. 确认 `backend/src/main/resources/application.yml` 中的本地数据库、邮件和上传目录配置可用。
-3. 启动后端：`cd backend && mvn spring-boot:run`，默认端口为 `8080`，接口文档为 `http://localhost:8080/doc.html`。
-4. 启动前端：`cd notepadweb && npm install && npm run dev`，默认地址为 `http://localhost:5173`。
+1. 用 MySQL 8 执行 [`sql/init.sql`](./sql/init.sql)；已有库按序号执行 [`sql/upgrade/`](./sql/upgrade) 中尚未应用的脚本
+2. 配置下列环境变量（缺任何一个都会因占位符无法解析而启动失败）：
 
-## 构建
+   ```
+   DB_USERNAME / DB_PASSWORD / JWT_SECRET
+   AI_DASHSCOPE_API_KEY / MAIL_USERNAME / MAIL_PASSWORD
+   ```
 
-- 后端：`cd backend && mvn package`
-- 前端：`cd notepadweb && npm run build`
+3. 启动后端：`cd backend && mvn spring-boot:run`，接口文档在 http://localhost:8080/doc.html
+4. 启动前端：`cd notepadweb && npm install && npm run dev`，地址 http://localhost:5173
+
+> 联调提示：登录失败限流的计数在进程内存里，本地反复试密码被锁的话重启后端即可解锁；
+> 也可以把 `NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_IP` 调大（本地所有请求 IP 都是 `127.0.0.1`，会跨测试账号累计）。
+
+## 构建与部署
+
+```bash
+cd backend    && mvn clean package -DskipTests   # 产物：target/*.jar
+cd notepadweb && npm run build                   # 产物：dist/
+```
+
+部署编排、Nginx 配置与踩过的坑都在 [部署上线指南](./docs/05-部署上线指南.md)。
+
+**增量脚本与 jar 的上线顺序不能反**：先执行 SQL，再换 jar。
+
+## 设计文档
+
+| 文档 | 内容 |
+|---|---|
+| [01-需求分析](./docs/01-需求分析.md) | 需求背景与用例 |
+| [02-数据库设计](./docs/02-数据库设计.md) | 表结构、索引、状态机 |
+| [03-接口设计](./docs/03-接口设计.md) | 全部接口约定、错误码、前端联调约定 |
+| [04-前端开发指南](./docs/04-前端开发指南.md) | 前端结构与约定 |
+| [05-部署上线指南](./docs/05-部署上线指南.md) | 打包、上传、上线顺序、常见坑 |
+| [06-需求规格说明书](./docs/06-需求规格说明书.md) | 需求规格 |
+| [07-pgvector迁移对比报告](./docs/07-pgvector迁移对比报告.md) | 两种向量存储的实测对比 |
+
+## 已知限制
+
+写在这里而不是等人问出来：
+
+- **限流计数在进程内存**，重启即清零、多实例不共享 —— 需要多实例时换 Redis 计数
+- **token 吊销是用户级而非会话级** —— 任一设备登出或改密码后，该账号所有设备都要重新登录；要做到「单设备登出」需要引入 `jti` 黑名单
+- **向量索引是全局单例**，备份/恢复会影响所有用户，目前没有角色模型来收敛这个接口
+- **规模未验证** —— 一切都在几十篇笔记、单活跃用户下验过，没有做压测
+- **没有自动化测试与 CI** —— 当前靠 `backend/scripts/verify-*.sh` 端到端验收，这些脚本需要真实环境和 API Key，进不了 CI
+
+---
 
 上传图片通过登录态保护；前端访问 `/api` 和 `/uploads` 时由 Vite 或生产环境反向代理转发到后端。
