@@ -45,9 +45,9 @@ CREATE TABLE `notebook` (
     `is_default`  TINYINT         NOT NULL DEFAULT 0      COMMENT '是否默认笔记本：1 是 / 0 否（默认笔记本不可重命名、不可删除）',
     `create_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    `deleted`     TINYINT         NOT NULL DEFAULT 0      COMMENT '逻辑删除：0 正常 / 1 删除',
+    `deleted`     BIGINT          NOT NULL DEFAULT 0      COMMENT '逻辑删除：0 正常 / 删除时间戳（epoch 秒）',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_user_name` (`user_id`, `name`),
+    UNIQUE KEY `uk_user_name` (`user_id`, `name`, `deleted`),
     KEY `idx_user_id` (`user_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '笔记本表';
 
@@ -84,9 +84,9 @@ CREATE TABLE `tag` (
     `name`        VARCHAR(30)     NOT NULL                COMMENT '标签名称（同一用户下唯一）',
     `create_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    `deleted`     TINYINT         NOT NULL DEFAULT 0      COMMENT '逻辑删除：0 正常 / 1 删除',
+    `deleted`     BIGINT          NOT NULL DEFAULT 0      COMMENT '逻辑删除：0 正常 / 删除时间戳（epoch 秒）',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_user_name` (`user_id`, `name`),
+    UNIQUE KEY `uk_user_name` (`user_id`, `name`, `deleted`),
     KEY `idx_user_id` (`user_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT = '标签表';
 
