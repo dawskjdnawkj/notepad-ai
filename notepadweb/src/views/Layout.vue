@@ -817,8 +817,11 @@ async function handleChangePassword() {
   changeLoading.value = true
   try {
     await changePassword(changePwdForm.code, changePwdForm.newPassword)
-    ElMessage.success('密码修改成功')
     changePwdVisible.value = false
+    // 改密后服务端已吊销 token，这里只清本地态即可；
+    // 不能调 logout()：token 已失效，会多打一次必定 401 的请求，两条提示会打架
+    ElMessage.success('密码修改成功，请重新登录（其他设备也会退出登录）')
+    userStore.clearSession()
   } catch {
     // 错误已在拦截器处理
   } finally {

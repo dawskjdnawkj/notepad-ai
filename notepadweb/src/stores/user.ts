@@ -36,17 +36,28 @@ export const useUserStore = defineStore('user', () => {
     userInfo.value = user
   }
 
-  /** 登出 */
-  async function logout() {
-    try {
-      await logoutApi()
-    } finally {
-      token.value = ''
-      userInfo.value = null
-      localStorage.removeItem('token')
+  /**
+   * 只清本地登录态并回登录页，不调后端。
+   * 用于改密成功后（服务端已吊销 token）、路由守卫失败等场景。
+   */
+  function clearSession() {
+    token.value = ''
+    userInfo.value = null
+    localStorage.removeItem('token')
+    // 已在登录页就不要再 push，否则 vue-router 会抛重复导航的 rejection
+    if (router.currentRoute.value.path !== '/login') {
       router.push('/login')
     }
   }
 
-  return { token, userInfo, isLoggedIn, login, register, fetchMe, logout }
+  /** 登出：服务端吊销 token，无论成功失败都清本地态 */
+  async function logout() {
+    try {
+      await logoutApi()
+    } finally {
+      clearSession()
+    }
+  }
+
+  return { token, userInfo, isLoggedIn, login, register, fetchMe, logout, clearSession }
 })

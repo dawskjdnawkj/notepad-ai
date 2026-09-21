@@ -87,7 +87,8 @@ router.beforeEach(async (to, _from, next) => {
       try {
         await userStore.fetchMe()
       } catch {
-        userStore.logout()
+        // 只清本地态：fetchMe 都失败了，再调 logout 只会多打一次必定 401 的请求
+        userStore.clearSession()
         return next('/login')
       }
     }

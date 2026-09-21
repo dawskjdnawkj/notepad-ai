@@ -1,6 +1,5 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import router from '../router'
 import { useUserStore } from '../stores/user'
 
 const request = axios.create({
@@ -45,13 +44,21 @@ request.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response
       if (status === 401) {
-        localStorage.removeItem('token')
         // 同时清空 Pinia 里的登录态，避免路由守卫仍认为已登录而卡死
         const userStore = useUserStore()
-        userStore.token = ''
-        userStore.userInfo = null
-        ElMessage.error('登录已过期，请重新登录')
-        router.push('/login')
+        userStore.clearSession()
+        // 后端区分了「登录已过期」和「登出/改密后被吊销」，直接用它给的文案
+        ElMessage.error(data?.message || '登录已过期，请重新登录')
+      } else if (status === 429) {
+        // 登录失败限流：后端 message 里已带「请 N 分钟后再试」，给足阅读时间
+        ElMessage({
+          type: 'error',
+          duration: 5000,
+          message: withRequestId(
+            data?.message || '操作过于频繁，请稍后再试',
+            error.response.headers?.['x-request-id']
+          ),
+        })
       } else {
         ElMessage.error(withRequestId(
           data?.message || `请求错误 ${status}`,
