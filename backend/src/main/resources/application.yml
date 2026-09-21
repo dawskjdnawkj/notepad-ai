@@ -83,8 +83,11 @@ notepad:
     login-attempt:
       # 同一「用户名+IP」在窗口内的失败次数上限；登录成功会清零
       max-per-user-ip: ${NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_USER_IP:5}
-      # 同一 IP 在窗口内的失败总次数上限，防止换着用户名撞库
-      max-per-ip: ${NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_IP:20}
+      # 同一 IP 在窗口内的失败上限，防止换着用户名撞库。
+      # 计的是「每个不同用户名贡献一份」（同一用户名超出用户维度的部分会被退还），
+      # 所以 50 对共享出口 IP（公司/学校 NAT）留了余量，对撞库仍然很严 ——
+      # 攻击者一个窗口内只能试 50 个不同用户名。
+      max-per-ip: ${NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_IP:50}
       # 统计窗口，同时也是锁定时长；验证脚本用环境变量覆盖成 20s 来快速跑过期场景
       window: ${NOTEPAD_AUTH_LOGIN_ATTEMPT_WINDOW:15m}
   ai:

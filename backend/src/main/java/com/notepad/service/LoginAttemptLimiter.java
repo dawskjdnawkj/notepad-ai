@@ -48,7 +48,7 @@ public class LoginAttemptLimiter {
 
     public LoginAttemptLimiter(
             @Value("${notepad.auth.login-attempt.max-per-user-ip:5}") int maxPerUserIp,
-            @Value("${notepad.auth.login-attempt.max-per-ip:20}") int maxPerIp,
+            @Value("${notepad.auth.login-attempt.max-per-ip:50}") int maxPerIp,
             @Value("${notepad.auth.login-attempt.window:15m}") Duration window) {
         if (maxPerUserIp < 1 || maxPerIp < 1 || window.isZero() || window.isNegative()) {
             throw new IllegalArgumentException("登录失败限流参数必须为正数");
