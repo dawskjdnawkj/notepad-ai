@@ -27,6 +27,9 @@ public class User {
 
     private Integer status;
 
+    /** JWT 版本号：登出 / 改密码时 +1，使已签发的旧 token 立即失效 */
+    private Integer tokenVersion;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

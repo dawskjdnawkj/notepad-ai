@@ -5,6 +5,7 @@ import com.notepad.common.BusinessException;
 import com.notepad.common.UserContext;
 import com.notepad.entity.NoteImage;
 import com.notepad.mapper.NoteImageMapper;
+import com.notepad.mapper.UserMapper;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -26,6 +27,7 @@ public class JwtInterceptor implements HandlerInterceptor {
     private final JwtService jwtService;
     private final JwtCookieService jwtCookieService;
     private final NoteImageMapper noteImageMapper;
+    private final UserMapper userMapper;
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
@@ -41,7 +43,13 @@ public class JwtInterceptor implements HandlerInterceptor {
             throw new BusinessException(401, "未登录或登录已过期");
         }
         try {
-            Long userId = jwtService.parseToken(token);
+            JwtService.TokenPayload payload = jwtService.parseToken(token);
+            Long userId = payload.userId();
+            // 版本号比对：登出 / 改密码后旧 token 立即失效；用户已删除（查不到）同样视为失效
+            Integer currentVersion = userMapper.selectTokenVersion(userId);
+            if (currentVersion == null || currentVersion != payload.tokenVersion()) {
+                throw new BusinessException(401, "登录状态已失效，请重新登录");
+            }
             UserContext.setUserId(userId);
             if (uploadRequest && !ownsImage(userId, request.getRequestURI())) {
                 throw new BusinessException(404, "图片不存在");

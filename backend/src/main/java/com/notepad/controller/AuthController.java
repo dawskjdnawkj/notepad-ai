@@ -1,5 +1,6 @@
 package com.notepad.controller;
 
+import com.notepad.common.ClientIpResolver;
 import com.notepad.common.Result;
 import com.notepad.config.JwtCookieService;
 import com.notepad.dto.ChangePasswordRequest;
@@ -49,7 +50,7 @@ public class AuthController {
     public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request,
                                        HttpServletRequest servletRequest,
                                        HttpServletResponse response) {
-        LoginResponse result = userService.login(request);
+        LoginResponse result = userService.login(request, ClientIpResolver.resolve(servletRequest));
         response.addHeader(HttpHeaders.SET_COOKIE,
                 jwtCookieService.create(result.getToken(), servletRequest.isSecure()));
         return Result.ok(result);
@@ -58,7 +59,11 @@ public class AuthController {
     @PostMapping("/logout")
     public Result<Void> logout(HttpServletRequest request, HttpServletResponse response) {
         userService.logout();
-        response.addHeader(HttpHeaders.SET_COOKIE, jwtCookieService.clear(request.isSecure()));
+        // 必须用 setHeader：JwtInterceptor 的 preHandle 已经 addHeader 刷新过一次
+        // notepad_access，addHeader 会追加出第二个同名 Set-Cookie，靠浏览器「取最后一个」
+        // 兜着 —— 一旦顺序被重排，过期 cookie 会留下，/uploads/** 会一直带着失效 token 请求，
+        // 而 <img> 的 401 不触发前端拦截器，表现为图片全裂且毫无提示。
+        response.setHeader(HttpHeaders.SET_COOKIE, jwtCookieService.clear(request.isSecure()));
         return Result.ok();
     }
 
@@ -74,8 +79,12 @@ public class AuthController {
     }
 
     @PostMapping("/password/reset")
-    public Result<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+    public Result<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request,
+                                      HttpServletRequest servletRequest,
+                                      HttpServletResponse response) {
         userService.resetPassword(request);
+        // 密码已变更，所有旧 token 失效，顺手清掉本地可能残留的 httpOnly cookie
+        response.setHeader(HttpHeaders.SET_COOKIE, jwtCookieService.clear(servletRequest.isSecure()));
         return Result.ok();
     }
 
@@ -86,8 +95,13 @@ public class AuthController {
     }
 
     @PostMapping("/password/change")
-    public Result<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
+    public Result<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request,
+                                       HttpServletRequest servletRequest,
+                                       HttpServletResponse response) {
         userService.changePassword(request);
+        // 改密后当前 token 已被吊销，但 preHandle 刚刷新过一次 cookie，指向的已是死 token，
+        // 这里必须用 setHeader 把它覆盖掉（logout 处有同样的说明）
+        response.setHeader(HttpHeaders.SET_COOKIE, jwtCookieService.clear(servletRequest.isSecure()));
         return Result.ok();
     }
 }

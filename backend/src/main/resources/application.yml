@@ -71,6 +71,15 @@ upload:
 
 # 百炼 RAG 请求会携带多个笔记片段，需要比普通短问答更长的读取等待时间
 notepad:
+  # 登录失败限流：按「用户名+IP」计数，另有单 IP 兜底，任一维度超限即返回 429
+  auth:
+    login-attempt:
+      # 同一「用户名+IP」在窗口内的失败次数上限；登录成功会清零
+      max-per-user-ip: ${NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_USER_IP:5}
+      # 同一 IP 在窗口内的失败总次数上限，防止换着用户名撞库
+      max-per-ip: ${NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_IP:20}
+      # 统计窗口，同时也是锁定时长；验证脚本用环境变量覆盖成 20s 来快速跑过期场景
+      window: ${NOTEPAD_AUTH_LOGIN_ATTEMPT_WINDOW:15m}
   ai:
     vector-store-file: ${NOTEPAD_VECTOR_STORE_FILE:./data/simple-vector-store.json}
     # 索引备份保留份数；超出后按最旧优先删除，不影响正在使用的索引文件

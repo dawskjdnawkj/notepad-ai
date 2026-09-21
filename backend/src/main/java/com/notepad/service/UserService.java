@@ -12,7 +12,10 @@ public interface UserService {
 
     LoginResponse register(RegisterRequest request);
 
-    LoginResponse login(LoginRequest request);
+    /**
+     * 登录。clientIp 由控制层解析后传入，用于失败限流；服务层不依赖 Servlet API
+     */
+    LoginResponse login(LoginRequest request, String clientIp);
 
     void logout();
 
