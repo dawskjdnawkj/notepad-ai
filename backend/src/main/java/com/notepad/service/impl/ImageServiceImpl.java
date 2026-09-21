@@ -32,6 +32,9 @@ public class ImageServiceImpl implements ImageService {
 
     private static final Pattern IMG_SRC = Pattern.compile("<img[^>]+src=[\"']([^\"']+)[\"']");
 
+    /** original_name 列宽 */
+    private static final int ORIGINAL_NAME_MAX = 255;
+
     private final NoteImageMapper noteImageMapper;
     private final UploadProperties uploadProperties;
 
@@ -40,8 +43,9 @@ public class ImageServiceImpl implements ImageService {
         if (file == null || file.isEmpty()) {
             throw new BusinessException(400, "图片不能为空");
         }
-        String originalName = file.getOriginalFilename();
-        String originalExt = extractExt(originalName);
+        String rawName = file.getOriginalFilename();
+        String originalExt = extractExt(rawName);
+        String originalName = safeOriginalName(rawName);
         String ext;
         try {
             ext = detectImageExtension(file);
@@ -153,6 +157,21 @@ public class ImageServiceImpl implements ImageService {
             // 文件删除失败不能打断主业务流程，只记录日志
             log.warn("删除图片文件失败: {}", fileName, e);
         }
+    }
+
+    /**
+     * original_name 列宽 VARCHAR(255)，且只用于展示（落盘名是 UUID），
+     * 所以这里去掉客户端可能带上的路径部分并截断。
+     * 不截断的话，multipart 的 filename 超过 255 字符会让文件已经落盘、
+     * 入库却报错，留下一个要等孤儿清理任务才回收的垃圾文件，并返回 500。
+     */
+    private static String safeOriginalName(String name) {
+        if (name == null) {
+            return null;
+        }
+        String cleaned = name.replace('\\', '/');
+        cleaned = cleaned.substring(cleaned.lastIndexOf('/') + 1);
+        return cleaned.length() > ORIGINAL_NAME_MAX ? cleaned.substring(0, ORIGINAL_NAME_MAX) : cleaned;
     }
 
     private String extractExt(String filename) {
