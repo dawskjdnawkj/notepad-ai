@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { login as loginApi, register as registerApi, getMe, logout as logoutApi } from '../api/auth'
 import type { UserInfo } from '../api/auth'
+import { clearLastNoteId } from '../utils/lastNote'
+import { useNotificationStore } from './notification'
 import router from '../router'
 
 export const useUserStore = defineStore('user', () => {
@@ -38,12 +40,17 @@ export const useUserStore = defineStore('user', () => {
 
   /**
    * 只清本地登录态并回登录页，不调后端。
-   * 用于改密成功后（服务端已吊销 token）、路由守卫失败等场景。
+   * 用于改密成功后（服务端已吊销 token）、路由守卫失败、SSE 返回 401 等场景。
    */
   function clearSession() {
     token.value = ''
     userInfo.value = null
     localStorage.removeItem('token')
+    // 不清 lastNoteId 的话，换个账号登录会先跳到上个账号的笔记 id，
+    // 请求被拒后弹一条错误提示再被 replace 到空状态
+    clearLastNoteId()
+    // 角标属于上一个账号，留着会串号
+    useNotificationStore().clearUnread()
     // 已在登录页就不要再 push，否则 vue-router 会抛重复导航的 rejection
     if (router.currentRoute.value.path !== '/login') {
       router.push('/login')

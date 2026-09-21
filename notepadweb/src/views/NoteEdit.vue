@@ -426,6 +426,14 @@ async function applyAiEdit() {
       text: aiEditText.value,
       contentHash: aiEditContentHash.value
     })
+    // 等待期间用户可能已经切走（侧栏点别的笔记、浏览器后退键）：
+    // content 是双向绑定到编辑器的，赋值会触发 onChange → 自动保存，
+    // 于是 A 的正文会被写进 B。服务端那次修改已经落库，这里只需丢弃本地赋值。
+    if (editingNoteId.value !== id) {
+      aiEditDialogVisible.value = false
+      ElMessage.info('笔记已切换，修改已保存到刚才那篇笔记')
+      return
+    }
     // 服务端已经写过一次；这里赋值会顺带触发一次自动保存（内容相同、幂等），
     // 不引入抑制标志，避免本地状态与服务端状态出现分歧。
     content.value = result.note.content
@@ -458,6 +466,11 @@ async function restoreAiEdit(revision: AiNoteRevision) {
   aiEditApplying.value = true
   try {
     const note = await restoreNoteAiRevision(id, revision.id)
+    // 同上：切走之后赋值会把这篇笔记的正文写进当前编辑器
+    if (editingNoteId.value !== id) {
+      ElMessage.info('笔记已切换，原文已恢复到刚才那篇笔记')
+      return
+    }
     content.value = note.content
     title.value = note.title
     selectedTagIds.value = note.tags.map(tag => tag.id)

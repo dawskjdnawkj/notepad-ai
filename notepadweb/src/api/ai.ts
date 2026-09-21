@@ -1,5 +1,15 @@
 import request from './request'
 import type { NoteDetail } from './note'
+import { useUserStore } from '../stores/user'
+
+/**
+ * SSE 走原生 fetch，不经过 axios 拦截器，401 的统一处理得自己做。
+ * 只删 localStorage 不够：isLoggedIn() 看的是 Pinia，路由守卫判定"已登录用户
+ * 访问登录页"，会把 /login 原路弹回笔记页，用户永远到不了登录页。
+ */
+function handleUnauthorized() {
+  useUserStore().clearSession()
+}
 
 export interface RagSource {
   noteId: number
@@ -400,7 +410,7 @@ export async function streamNoteAnswer(
   const responseRequestId = response.headers.get('X-Request-Id') || undefined
 
   if (!response.ok) {
-    if (response.status === 401) localStorage.removeItem('token')
+    if (response.status === 401) handleUnauthorized()
     const errorBody = await readErrorResponse(response)
     throw new AiStreamHttpError(
       errorBody.message,
@@ -562,7 +572,7 @@ export async function streamNoteAiEdit(
   const responseRequestId = response.headers.get('X-Request-Id') || undefined
 
   if (!response.ok) {
-    if (response.status === 401) localStorage.removeItem('token')
+    if (response.status === 401) handleUnauthorized()
     const errorBody = await readErrorResponse(response)
     throw new AiStreamHttpError(
       errorBody.message,
