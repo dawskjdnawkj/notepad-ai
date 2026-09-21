@@ -15,6 +15,12 @@
           </el-button>
         </el-form-item>
       </el-form>
+      <!-- 演示用：访客/面试官无需注册即可体验。点击自动填入 -->
+      <div class="demo-account" @click="fillDemoAccount">
+        <span class="demo-label">演示账号</span>
+        <span class="demo-cred">{{ DEMO_ACCOUNT.username }} / {{ DEMO_ACCOUNT.password }}</span>
+        <span class="demo-tip">点击填入</span>
+      </div>
       <div class="extra-link">
         <router-link to="/forgot-password">忘记密码？</router-link>
         <span class="sep">·</span>
@@ -42,6 +48,17 @@ const form = reactive({
   username: '',
   password: ''
 })
+
+/**
+ * 演示账号：展示站不需要访客注册即可体验。
+ * ⚠️ 改过这个账号的密码后，这里的文案要同步更新，否则提示就失效了。
+ */
+const DEMO_ACCOUNT = { username: '222222', password: '222222' }
+
+function fillDemoAccount() {
+  form.username = DEMO_ACCOUNT.username
+  form.password = DEMO_ACCOUNT.password
+}
 
 const rules: FormRules = {
   username: [
@@ -93,6 +110,34 @@ async function handleLogin() {
 }
 .submit-btn {
   width: 100%;
+}
+.demo-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 10px 14px;
+  border: 1px dashed #a0cfff;
+  border-radius: 6px;
+  background: #ecf5ff;
+  color: #409eff;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s;
+}
+.demo-account:hover {
+  background: #d9ecff;
+}
+.demo-cred {
+  font-family: Consolas, Monaco, monospace;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.demo-tip {
+  margin-left: auto;
+  color: #909399;
+  font-size: 12px;
 }
 .extra-link {
   text-align: center;

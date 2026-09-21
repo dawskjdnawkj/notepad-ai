@@ -243,6 +243,7 @@ import { getNotebookList, type NotebookVO } from '../api/notebook'
 import { getTagList, createTag, type TagVO } from '../api/tag'
 import { setReminder, cancelReminder } from '../api/reminder'
 import { uploadImage } from '../api/image'
+import { useUserStore } from '../stores/user'
 import { setLastNoteId } from '../utils/lastNote'
 import { findNextNoteId } from '../utils/nextNote'
 import { exportNoteAsMarkdown } from '../utils/export'
@@ -250,6 +251,7 @@ import { loadRagReference } from '../utils/ragReference'
 
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 const openNoteLibrary = inject<() => void>('openNoteLibrary')
 const setActiveNoteNotebookId = inject<(noteId: number, notebookId: number | null) => void>(
   'setActiveNoteNotebookId'
@@ -797,6 +799,9 @@ async function flushSave() {
     clearTimeout(saveTimer)
     saveTimer = null
   }
+  // 已登出时不再尝试保存：请求必然 401，只会弹一条"登录状态已失效"的误导提示，
+  // 干扰退出登录本身的跳转（草稿仍在 localStorage 里，重新登录后还能恢复）
+  if (!userStore.isLoggedIn()) return
   enqueueSave()
   await saveChain
 }
@@ -1011,7 +1016,14 @@ watch(
 )
 
 onBeforeRouteLeave(async () => {
-  await flushSave()
+  // 这个守卫的 Promise 一旦 reject，vue-router 会把它当成「导航中止」，页面就卡在原处不动。
+  // 登出后 token 已被吊销，这里的保存必然 401 —— 正是这个场景导致退出登录后页面不跳转。
+  // 保存失败只该丢一次草稿，绝不该拦着用户走。
+  try {
+    await flushSave()
+  } catch {
+    // 拦截器已提示，这里只负责放行
+  }
 })
 
 function preserveDraftBeforeUnload() {
