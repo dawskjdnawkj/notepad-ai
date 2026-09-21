@@ -1,0 +1,85 @@
+# 云记事本 Docker 部署编排。
+#
+# 这台服务器上已经跑着另一套 mall-resume 的 compose 栈，两个硬约束决定了下面写法：
+#
+#   1. 复用 mall-resume 的 MySQL 容器，不新建数据库实例。
+#      机器只有 1.6G 内存，再起一个 MySQL（300–500MB）必然 OOM。
+#      本项目的库名是 cloud_notepad，与 mall-resume 的 mall 库互不干扰。
+#
+#   2. 前端 Nginx 用 8082，不碰 80。
+#      80 已被 mall-resume 的前端容器占用。
+#
+# 用法：
+#   cp .env.example .env    # 填入真实值，.env 不提交到仓库
+#   docker compose up -d
+#
+# 前置：数据库要先建好并跑过 init.sql，见 docs/05-部署上线指南.md。
+
+services:
+  backend:
+    build:
+      context: ./backend
+    image: notepad-backend:latest
+    container_name: notepad-backend
+    restart: unless-stopped
+    # 1.6G 的机器上和另一套栈共存，必须设上限，否则会被 OOM Killer 杀掉
+    mem_limit: 320m
+    networks:
+      - mall_resume_default
+    environment:
+      # 直连同机 mall-resume 的 MySQL 容器。用容器名而不是服务名，避免歧义。
+      SPRING_DATASOURCE_URL: jdbc:mysql://mall_resume-mysql-1:3306/cloud_notepad?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      AI_DASHSCOPE_API_KEY: ${AI_DASHSCOPE_API_KEY}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      # 生产环境用绝对路径，配合下面的具名卷
+      NOTEPAD_UPLOAD_DIR: /app/uploads
+      # 保持默认的 simple 向量存储：pgvector 需要额外的 PostgreSQL，这台机器装不下
+      TZ: Asia/Shanghai
+
+      # ---- 以下是针对小内存机器的运行时裁剪 ----
+      # Tomcat 默认开 200 个线程，配合 -Xss256k 就是 50MB 栈内存。
+      # 作品展示站同时在线一两个人，20 个绰绰有余。
+      SERVER_TOMCAT_THREADS_MAX: "20"
+      SERVER_TOMCAT_ACCEPT_COUNT: "50"
+      # 延迟初始化：Bean 用到才创建，省掉一批启动时并不会被访问的组件。
+      #
+      # ⚠️ 这个开关会影响 @TransactionalEventListener 的注册时机。
+      # 部署后必须验证「编辑笔记 → 向量索引自动更新」这条链路仍然正常
+      # （改一篇笔记，等 10 秒，看索引状态的 chunkCount 变化）。
+      # 如果不同步了，把这一行删掉即可（代价是启动内存多约 75MB）。
+      SPRING_MAIN_LAZY_INITIALIZATION: "true"
+      SPRING_JMX_ENABLED: "false"
+    volumes:
+      - notepad_uploads:/app/uploads
+    # 注意：这里用的是 expose 而不是 ports。
+    # 只有同网络的 web 容器需要访问它，不能暴露到公网。
+    expose:
+      - "8080"
+
+  web:
+    image: nginx:1.30
+    container_name: notepad-web
+    restart: unless-stopped
+    mem_limit: 64m
+    depends_on:
+      - backend
+    networks:
+      - mall_resume_default
+    ports:
+      # 80 已被 mall-resume 占用，这里用 8082
+      - "${NOTEPAD_WEB_PORT:-8082}:80"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+
+networks:
+  # 加入 mall-resume 已经建好的网络，这样后端才能连上它的 MySQL
+  mall_resume_default:
+    external: true
+
+volumes:
+  notepad_uploads:
