@@ -29,6 +29,12 @@ notepadweb/dist/
 # 部署时的真实密钥，只提交 .env.example
 deploy/.env
 
+# 部署产物：本地打包后上传到服务器，不进版本库。
+# app.jar 是 57MB 的构建产物（源码在 backend/，重新构建即可）；
+# frontend/dist 是 notepadweb 的构建输出。提交它们会让仓库膨胀且毫无意义。
+deploy/backend/app.jar
+deploy/frontend/
+
 # 系统文件
 .DS_Store
 Thumbs.db
