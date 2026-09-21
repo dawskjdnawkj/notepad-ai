@@ -74,14 +74,23 @@ public class LoginAttemptLimiter {
         // 新用户名建一条。IP 已经锁定时就直接拒绝、不再建档，否则攻击者用同一 IP
         // 刷海量随机用户名就能让 userIpStore 无上限增长（容器只有 160m 堆）。
         long ipRemaining = acquire(ipStore, ipKey(ip), maxPerIp, "ip", now);
-        long remaining = ipRemaining > 0
-                ? ipRemaining
-                : acquire(userIpStore, userIpKey(username, ip), maxPerUserIp, "user-ip", now);
-        if (remaining > 0) {
-            long minutes = Math.max(1L, (remaining + 59_999L) / 60_000L);
-            log.warn("event=auth.login.rejected outcome=rate_limited ip={} remainingMs={}", ip, remaining);
-            throw new BusinessException(429, "登录失败次数过多，请 " + minutes + " 分钟后再试");
+        if (ipRemaining > 0) {
+            throw tooManyAttempts(ip, ipRemaining);
         }
+        long userRemaining = acquire(userIpStore, userIpKey(username, ip), maxPerUserIp, "user-ip", now);
+        if (userRemaining > 0) {
+            // 这次请求被「用户名 + IP」维度拦下，根本没走到口令校验，不该占用 IP 维度的额度。
+            // 不归还的话，一个用户被锁定后继续重试，会连带把这个出口 IP 也刷到锁定 ——
+            // NAT 后面其他人跟着一起登不进来。
+            refundIp(ip);
+            throw tooManyAttempts(ip, userRemaining);
+        }
+    }
+
+    private BusinessException tooManyAttempts(String ip, long remaining) {
+        long minutes = Math.max(1L, (remaining + 59_999L) / 60_000L);
+        log.warn("event=auth.login.rejected outcome=rate_limited ip={} remainingMs={}", ip, remaining);
+        return new BusinessException(429, "登录失败次数过多，请 " + minutes + " 分钟后再试");
     }
 
     /**
@@ -91,13 +100,22 @@ public class LoginAttemptLimiter {
      * <ul>
      *   <li>「用户名 + IP」直接清零 —— 攻击者要对某个账号做爆破，得先知道该账号的密码
      *       才能触发清零，所以不构成绕过；而对误输几次的正常用户，清零是必要的体验。</li>
-     *   <li>「单 IP」只**归还本次占用的那一个额度**，绝不清零 —— 清零会变成绕过手段：
-     *       攻击者注册一个自己的账号，每撞库 19 次就用自己账号成功登录一次把计数抹掉，
-     *       IP 维度就完全失效了。归还一个额度只是抵消本次尝试，不会抹掉之前的失败。</li>
+     *   <li>「单 IP」只归还本次占用的那一个额度，不清零 —— 理由见 {@link #refundIp}。</li>
      * </ul>
      */
     public void release(String username, String ip) {
         userIpStore.remove(userIpKey(username, ip));
+        refundIp(ip);
+    }
+
+    // ------------------------------------------------------------------ 内部实现
+
+    /**
+     * 归还 IP 维度占用的一个额度。只递减、不清零：清零会变成绕过手段 ——
+     * 攻击者注册一个自己的账号，每撞库 19 次就用自己账号成功登录一次把计数抹掉，
+     * IP 维度就完全失效了。递减只是抵消这一次尝试，不会抹掉之前的失败。
+     */
+    private void refundIp(String ip) {
         ipStore.computeIfPresent(ipKey(ip), (k, attempt) -> {
             if (attempt.count > 0) {
                 attempt.count--;
@@ -105,8 +123,6 @@ public class LoginAttemptLimiter {
             return attempt;
         });
     }
-
-    // ------------------------------------------------------------------ 内部实现
 
     /**
      * 原子地累加一次尝试并返回需要等待的毫秒数（0 表示放行）。
