@@ -55,6 +55,10 @@ services:
       SPRING_JMX_ENABLED: "false"
     volumes:
       - notepad_uploads:/app/uploads
+      # 向量索引默认写在 NOTEPAD_VECTOR_STORE_FILE=./data/simple-vector-store.json，
+      # 容器内即 /app/data。不挂卷的话它落在容器可写层，每次重建容器
+      # 整个 AI 索引都会被抹掉（要重新调用 embedding 重建，费时费额度）。
+      - notepad_data:/app/data
     # 注意：这里用的是 expose 而不是 ports。
     # 只有同网络的 web 容器需要访问它，不能暴露到公网。
     expose:
@@ -83,3 +87,4 @@ networks:
 
 volumes:
   notepad_uploads:
+  notepad_data:

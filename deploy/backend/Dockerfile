@@ -23,9 +23,11 @@ WORKDIR /app
 #   -Duser.timezone           定时任务（提醒、回收站清理）按本地时区跑
 ENV JAVA_OPTS="-Xms64m -Xmx160m -Xss256k -XX:MaxMetaspaceSize=96m -XX:ReservedCodeCacheSize=48m -XX:TieredStopAtLevel=1 -XX:MaxDirectMemorySize=32m -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -Duser.timezone=Asia/Shanghai"
 
-# 用非 root 运行；上传目录在 compose 里挂了具名卷
+# 用非 root 运行；上传目录和向量索引目录在 compose 里都挂了具名卷。
+# /app/data 必须先建出来并 chown 成 notepad：具名卷首次挂载会从镜像该路径继承属主，
+# 镜像里没有这个目录的话 Docker 建的会是 root:root，应用（非 root）就写不进去了。
 RUN addgroup -S notepad && adduser -S notepad -G notepad \
-    && mkdir -p /app/uploads && chown -R notepad:notepad /app
+    && mkdir -p /app/uploads /app/data && chown -R notepad:notepad /app
 
 COPY --chown=notepad:notepad app.jar /app/app.jar
 
