@@ -1,5 +1,7 @@
 # 云记事本（CloudNotepad）
 
+[![CI](https://github.com/dawskjdnawkj/notepad-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/dawskjdnawkj/notepad-ai/actions/workflows/ci.yml)
+
 一个可部署上线的多用户云记事本，内置 **检索增强（RAG）的 AI 助手**：能基于你自己的笔记流式问答并给出引用来源，还能让 AI 直接改写笔记（预览确认后才写回，可一键恢复原文）。
 
 ## 在线演示
@@ -47,6 +49,26 @@
 - **AI 并发许可守恒**：全局 + 单用户双层限流，并且有断言保证「活跃数 + 可用数 == 上限」，许可泄漏测得出来
 - **索引原子保存与损坏恢复**：写入走临时文件 + 原子替换，保留多份备份，索引损坏时可回退
 - **7 个端到端验收脚本**（`backend/scripts/verify-*.sh`）：每个特性配一个可复跑的验收脚本，覆盖限流、吊销、并发许可、索引恢复、pgvector 迁移等
+- **45 个单元测试 + GitHub Actions CI**：全部 Mock 掉数据库、模型调用与邮件，不烧额度也不需要真实环境，任何人在本地 `mvn test` 都能复现
+
+## 测试
+
+```bash
+cd backend && mvn test          # 45 个单元测试，约 2 秒
+cd notepadweb && npm run build  # 类型检查 + 生产构建
+```
+
+CI（[.github/workflows/ci.yml](./.github/workflows/ci.yml)）跑的就是这两条，不配任何密钥。
+
+单测和端到端脚本的分工：
+
+| | 单元测试 | `verify-*.sh` |
+|---|---|---|
+| 依赖 | 无（全部 Mock） | 真实数据库、服务进程、**百炼 API Key** |
+| 能进 CI | ✅ | ❌ |
+| 覆盖 | 限流边界与并发、JWT 版本号与存量兼容、登录编排顺序、提醒标题截断、验证码回收 | 全链路真实行为 |
+
+两者互补：单测保证改了 A 不坏 B，端到端脚本保证线上真的跑得通。
 
 ## 技术栈
 
@@ -104,7 +126,7 @@ cd notepadweb && npm run build                   # 产物：dist/
 - **token 吊销是用户级而非会话级** —— 任一设备登出或改密码后，该账号所有设备都要重新登录；要做到「单设备登出」需要引入 `jti` 黑名单
 - **向量索引是全局单例**，一份 `simple-vector-store.json` 服务所有用户，所以索引的备份/恢复是运维操作而非用户操作 —— 这几个接口只对 `NOTEPAD_INDEX_ADMIN_USERNAMES` 配置的账号开放，默认不开放
 - **规模未验证** —— 一切都在几十篇笔记、单活跃用户下验过，没有做压测
-- **没有自动化测试与 CI** —— 当前靠 `backend/scripts/verify-*.sh` 端到端验收，这些脚本需要真实环境和 API Key，进不了 CI
+- **前端没有测试** —— 后端有 45 个单元测试，前端目前只有 `vue-tsc` 的类型检查兜底，没有组件测试；UI 逻辑（自动保存、路由切换、AI 流式渲染）仍然靠人工验证，这次开发中确实漏过两个只有实际操作才会暴露的问题
 
 ---
 
