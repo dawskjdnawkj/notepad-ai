@@ -487,9 +487,15 @@ function openNotebookMenu(e: MouseEvent, nb: NotebookVO) {
 
 // 加载笔记本分类
 async function loadSidebar() {
-  const [notebookList, tagList] = await Promise.all([getNotebookList(), getTagList()])
-  notebooks.value = notebookList
-  tags.value = tagList
+  try {
+    const [notebookList, tagList] = await Promise.all([getNotebookList(), getTagList()])
+    notebooks.value = notebookList
+    tags.value = tagList
+  } catch {
+    // 拦截器已提示。这里自己吞掉：loadSidebar 大多是以 fire-and-forget 方式调用的
+    // （onMounted、路由 watch、各操作成功后），不吞会留下一堆未处理的 rejection。
+    // 失败时保留上一次的数据，别把侧栏清空。
+  }
 }
 
 // 笔记本展开/收起（点击笔记本即切换，并记为“当前笔记本”供新建笔记使用）
@@ -575,7 +581,11 @@ async function handleTogglePin() {
   const note = noteMenu.data
   closeMenus()
   if (!note) return
-  await pinNote(note.id, note.pinned !== 1)
+  try {
+    await pinNote(note.id, note.pinned !== 1)
+  } catch {
+    // 拦截器已提示；下面照样刷新，让侧栏显示真实的置顶状态
+  }
   await refreshVisibleNotes()
 }
 
@@ -678,7 +688,13 @@ async function handleDeleteNotebook() {
     )
   } catch { return }
 
-  await deleteNotebook(nb.id)
+  try {
+    await deleteNotebook(nb.id)
+  } catch {
+    // 删除失败就不要往下走本地清理：否则界面会显示成已删除、后端其实还在
+    // （拦截器已提示）
+    return
+  }
   ElMessage.success('笔记本已删除')
   currentNotebookId.value = null
   const idx = expandedIds.value.indexOf(nb.id)

@@ -64,7 +64,13 @@ async function loadList() {
 }
 
 async function handleRestore(id: number) {
-  await restoreNote(id)
+  try {
+    await restoreNote(id)
+  } catch {
+    // 拦截器已提示；下面照样刷新列表，让界面回到真实状态
+    loadList()
+    return
+  }
   ElMessage.success('笔记已恢复')
   loadList()
 }
