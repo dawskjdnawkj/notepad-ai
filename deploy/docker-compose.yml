@@ -88,8 +88,18 @@ services:
     networks:
       - mall_resume_default
     ports:
-      # 80 已被 mall-resume 占用，这里用 8082
-      - "${NOTEPAD_WEB_PORT:-8082}:80"
+      # 80 已被 mall-resume 占用，这里用 8082。
+      #
+      # ⚠️ 绑定地址默认 0.0.0.0，是因为本文档第 8 节那条「裸 Docker」路子里，
+      # 8082 就是对外入口。但**如果外面还有一层宿主机 Nginx**（本项目的线上就是这样），
+      # 必须设成 NOTEPAD_WEB_BIND=127.0.0.1，否则可以绕过宿主机入口直连 8082。
+      #
+      # 为什么这件事很严重：宿主机 Nginx 用 X-Real-IP 下发真实客户端 IP，
+      # 而这一层是原样透传的（见 nginx/conf.d/notepad.conf 里的说明）。
+      # 8082 一旦公网可达，攻击者就能自己塞 X-Real-IP，每次换一个假 IP ——
+      # 登录失败限流会按假 IP 分桶，等于完全失效。实测 8 次伪造全部 401、一次都没锁。
+      # 宿主机入口会覆盖写 X-Real-IP，所以只留那一条路是安全的。
+      - "${NOTEPAD_WEB_BIND:-0.0.0.0}:${NOTEPAD_WEB_PORT:-8082}:80"
     volumes:
       - ./frontend/dist:/usr/share/nginx/html:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
