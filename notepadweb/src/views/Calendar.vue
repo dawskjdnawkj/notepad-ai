@@ -72,6 +72,8 @@ const dayNotes = ref<NoteListItem[]>([])
 const dayNotesTotal = ref(0)
 const dayNotesPage = ref(1)
 const dayNotesLoading = ref(false)
+/** 日期弹窗的请求序号，用于丢弃过期响应 */
+let dayNotesRequestId = 0
 
 const currentMonth = computed(() => {
   return `${currentYear.value}-${String(currentMonthNum.value).padStart(2, '0')}`
@@ -127,21 +129,29 @@ async function handleDateClick(data: { day: string }) {
 }
 
 async function loadDayNotes(reset = false) {
-  if (!selectedDay.value || dayNotesLoading.value) return
+  // 用请求序号而不是 dayNotesLoading 做保护。原来的写法是「有请求在飞就 return」，
+  // 结果快速切换日期时新日期的请求会被整个丢掉 —— 弹窗标题是新日期，内容永远加载不出来；
+  // 而且旧请求返回后会直接盖掉新日期的列表。
+  const day = selectedDay.value
+  if (!day) return
+  const requestId = ++dayNotesRequestId
   const page = reset ? 1 : dayNotesPage.value + 1
   dayNotesLoading.value = true
   try {
-    const result = await getNoteList({ createdDate: selectedDay.value, page, pageSize: 30 })
+    const result = await getNoteList({ createdDate: day, page, pageSize: 30 })
+    if (requestId !== dayNotesRequestId) return
     dayNotes.value = reset ? result.records : [...dayNotes.value, ...result.records]
     dayNotesTotal.value = result.total
     dayNotesPage.value = page
   } catch {
-    if (reset) {
+    if (reset && requestId === dayNotesRequestId) {
       dayNotes.value = []
       dayNotesTotal.value = 0
     }
   } finally {
-    dayNotesLoading.value = false
+    if (requestId === dayNotesRequestId) {
+      dayNotesLoading.value = false
+    }
   }
 }
 
