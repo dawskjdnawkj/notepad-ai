@@ -936,6 +936,8 @@ const evalFeedbackSuggestedSources = computed(() => {
 const messageListRef = ref<HTMLElement>()
 let messageSequence = 0
 let activeController: AbortController | null = null
+/** 当前正在逐字渲染的渲染器。组件卸载时要把它一起停掉，否则定时器会继续跑到把缓冲吐完 */
+let activeRenderer: { flush: () => void } | null = null
 let conversationStorageKey: string | null = null
 let legacyConversationStorageKey: string | null = null
 let conversationSyncMarkerKey: string | null = null
@@ -1632,6 +1634,7 @@ async function submit(suggestedQuestion?: string) {
   const controller = new AbortController()
   activeController = controller
   const renderer = createProgressiveRenderer(assistantMessage)
+  activeRenderer = renderer
   let pendingSources: RagSource[] = []
   scrollToBottom()
 
@@ -1679,6 +1682,7 @@ async function submit(suggestedQuestion?: string) {
     }
   } finally {
     if (activeController === controller) activeController = null
+    if (activeRenderer === renderer) activeRenderer = null
     isGenerating.value = false
     scrollToBottom()
   }
@@ -1715,6 +1719,10 @@ function handleQuestionKeydown(event: KeyboardEvent) {
 
 function stopGeneration() {
   activeController?.abort()
+  // 流已经 onDone 但缓冲还没吐完时卸载组件，渲染器的 setTimeout 链会继续按
+  // 每 24ms 一批跑到吐完（长回答能有几十秒）。flush 会清掉定时器并一次性排空，
+  // 让它在卸载瞬间结束。
+  activeRenderer?.flush()
 }
 
 async function clearConversation() {
