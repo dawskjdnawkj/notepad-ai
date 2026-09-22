@@ -434,13 +434,14 @@ async function applyAiEdit() {
       ElMessage.info('笔记已切换，修改已保存到刚才那篇笔记')
       return
     }
-    // 服务端已经写过一次；这里赋值会顺带触发一次自动保存（内容相同、幂等），
-    // 不引入抑制标志，避免本地状态与服务端状态出现分歧。
+    // 服务端已经写过一次，但本地这份还要走一遍自动保存（内容相同、幂等）。
+    // 这里不能直接 saved = true：那样状态栏会立刻显示「已保存」，
+    // 而保存其实还没发出去 —— 万一失败用户也会以为存上了。
+    // 交给 triggerAutoSave，让 saved 由真实保存结果决定。
     content.value = result.note.content
     title.value = result.note.title
     selectedTagIds.value = result.note.tags.map(tag => tag.id)
-    changeVersion += 1
-    saved.value = true
+    triggerAutoSave()
     aiEditDialogVisible.value = false
     ElMessage.success('已应用到笔记，可在同一面板里恢复原文')
   } catch {
@@ -474,8 +475,8 @@ async function restoreAiEdit(revision: AiNoteRevision) {
     content.value = note.content
     title.value = note.title
     selectedTagIds.value = note.tags.map(tag => tag.id)
-    changeVersion += 1
-    saved.value = true
+    // 同上：让 saved 由真实保存结果决定，而不是直接置 true
+    triggerAutoSave()
     await loadAiEditRevisions()
     ElMessage.success('已恢复原文')
   } catch {
@@ -713,6 +714,8 @@ interface LocalDraft {
   content: string
   tagIds: number[]
   updatedAt: number
+  /** 写入这份草稿的用户。旧版本没有这个字段，读取时按「未知」放行以保留恢复能力 */
+  userId?: number
 }
 
 function draftKey(id: number) {
@@ -724,7 +727,8 @@ function saveDraft(id: number) {
     title: title.value,
     content: content.value,
     tagIds: [...selectedTagIds.value],
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    userId: userStore.userInfo?.id
   }
   try {
     localStorage.setItem(draftKey(id), JSON.stringify(draft))
@@ -744,6 +748,14 @@ function restoreDraft(id: number): boolean {
   if (!raw) return false
   try {
     const draft = JSON.parse(raw) as LocalDraft
+    // 共享浏览器上，上一个账号登出后留下的未保存草稿不该被当前账号恢复出来。
+    // noteId 是全局唯一的，别人打不开那篇笔记，但草稿是明文躺在 localStorage 里的。
+    // 旧版本写的草稿没有 userId，按「未知」放行，避免升级后丢掉用户的恢复能力。
+    const currentUserId = userStore.userInfo?.id
+    if (draft.userId != null && currentUserId != null && draft.userId !== currentUserId) {
+      clearDraft(id)
+      return false
+    }
     title.value = draft.title || ''
     content.value = draft.content || ''
     selectedTagIds.value = Array.isArray(draft.tagIds) ? draft.tagIds : []
@@ -925,6 +937,9 @@ async function init(ignoreNew: boolean = false) {
   const requestId = ++initRequestId
   const requestedRouteId = route.params.id
   const isCreating = requestedRouteId === 'new' && !ignoreNew
+  // 创建要走两次往返（拉选项、建笔记），这段窗口里用户很可能已经点进标题框开始打字了。
+  // 记下清空后的值，服务端返回时用它判断用户有没有动过标题。
+  let titleAtCreateStart = ''
   if (isCreating) {
     editingNoteId.value = null
     title.value = ''
@@ -933,6 +948,7 @@ async function init(ignoreNew: boolean = false) {
     reminder.value = null
     saved.value = true
     lastSaveTime.value = ''
+    titleAtCreateStart = title.value
   }
   const [nbList, tagList] = await Promise.all([getNotebookList(), getTagList()])
   if (requestId !== initRequestId || route.params.id !== requestedRouteId) return
@@ -947,13 +963,22 @@ async function init(ignoreNew: boolean = false) {
       if (requestId !== initRequestId || route.params.id !== 'new') return
       setLastNoteId(note.id)
       editingNoteId.value = note.id
-      title.value = note.title
+      // 不能无条件用服务端返回的标题覆盖：用户在创建期间打的字还没落盘，
+      // 覆盖掉就彻底丢了（连草稿都没有，因为那时 editingNoteId 还是 null）
+      const userTypedTitle = title.value !== titleAtCreateStart
+      if (!userTypedTitle) {
+        title.value = note.title
+      }
       content.value = note.content || ''
       currentNotebookId.value = note.notebookId
       setActiveNoteNotebookId?.(note.id, note.notebookId)
       selectedTagIds.value = note.tags.map(t => t.id)
       reminder.value = note.reminder
       saved.value = true
+      if (userTypedTitle) {
+        // 用户输入的标题只在本地，补一次自动保存把它落盘
+        triggerAutoSave()
+      }
       router.replace({ path: `/notes/${note.id}`, replace: true })
     } catch {
       ElMessage.error('新建笔记失败，请稍后重试')
