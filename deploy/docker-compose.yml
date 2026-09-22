@@ -40,6 +40,20 @@ services:
       # 保持默认的 simple 向量存储：pgvector 需要额外的 PostgreSQL，这台机器装不下
       TZ: Asia/Shanghai
 
+      # ---- 应用级开关 ----
+      #
+      # ⚠️ 这里是**显式白名单**：.env 里的变量不会自动进容器，必须在下面逐个声明。
+      # 只往 .env 里加一行是不够的 —— 容器里会读到空值，而且不会有任何报错。
+      #
+      # 默认值都写成与 application.yml 一致，不配 .env 也能跑。
+      # 允许操作全局向量索引备份/恢复的运维账号（逗号分隔）。索引是全局单例，
+      # 一次恢复会影响所有用户，所以留空 = 谁都不能用（fail-closed）。
+      NOTEPAD_INDEX_ADMIN_USERNAMES: ${NOTEPAD_INDEX_ADMIN_USERNAMES:-}
+      # 登录失败限流
+      NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_USER_IP: ${NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_USER_IP:-5}
+      NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_IP: ${NOTEPAD_AUTH_LOGIN_ATTEMPT_MAX_PER_IP:-50}
+      NOTEPAD_AUTH_LOGIN_ATTEMPT_WINDOW: ${NOTEPAD_AUTH_LOGIN_ATTEMPT_WINDOW:-15m}
+
       # ---- 以下是针对小内存机器的运行时裁剪 ----
       # Tomcat 默认开 200 个线程，配合 -Xss256k 就是 50MB 栈内存。
       # 作品展示站同时在线一两个人，20 个绰绰有余。
