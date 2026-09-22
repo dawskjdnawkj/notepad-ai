@@ -1,5 +1,12 @@
 server:
   port: 8080
+  # 生产环境外面有两层 Nginx（宿主机入口 → 容器内 Nginx，见 deploy/），
+  # 这一行让 Tomcat 认上游传来的 X-Forwarded-Proto，request.isSecure() 才会返回 true。
+  # JwtCookieService 就是用它决定 notepad_access 要不要带 Secure 标志的 ——
+  # 不配的话 cookie 永远不带 Secure，HTTPS 站点上白白少一道防线。
+  # 只信任内网来源的 X-Forwarded-*（Tomcat RemoteIpValve 的默认行为），
+  # 而后端是 expose 不是 ports、只有容器内 Nginx 能连，所以伪造不了。
+  forward-headers-strategy: native
   servlet:
     encoding:
       charset: UTF-8
