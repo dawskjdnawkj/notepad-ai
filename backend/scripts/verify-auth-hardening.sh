@@ -165,6 +165,16 @@ else
     fail "带有效 token 访问 /api/auth/me 未返回 200"
 fi
 
+info "越权检查：全局向量索引的运维接口默认关闭，用户级接口不受影响"
+# 索引用的是默认配置，没设 NOTEPAD_INDEX_ADMIN_USERNAMES，应 fail-closed
+ADMIN_EP="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/api/ai/notes/index/backups" -H "$AUTH")"
+USER_EP="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/api/ai/notes/index/status" -H "$AUTH")"
+if [ "$ADMIN_EP" = "403" ] && [ "$USER_EP" = "200" ]; then
+    pass "普通用户调运维接口返回 403，索引状态等用户级接口仍返回 200"
+else
+    fail "越权检查不符预期：/index/backups=$ADMIN_EP（期望 403）、/index/status=$USER_EP（期望 200）"
+fi
+
 # ---------------------------------------------------------------- 场景 B
 
 section "场景 B：登录失败限流（用户名+IP）"

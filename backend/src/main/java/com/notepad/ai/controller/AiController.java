@@ -19,6 +19,7 @@ import com.notepad.ai.service.AiChatService;
 import com.notepad.ai.service.AiConcurrencyLimiter;
 import com.notepad.ai.service.AiEmbeddingService;
 import com.notepad.ai.service.AiMetricsService;
+import com.notepad.ai.service.IndexAdminGuard;
 import com.notepad.ai.service.NoteVectorService;
 import com.notepad.ai.service.RagAnswerService;
 import com.notepad.common.Result;
@@ -46,6 +47,7 @@ public class AiController {
     private final RagAnswerService ragAnswerService;
     private final AiConcurrencyLimiter concurrencyLimiter;
     private final AiMetricsService metricsService;
+    private final IndexAdminGuard indexAdminGuard;
 
     @PostMapping("/chat")
     public Result<String> chat(
@@ -95,23 +97,34 @@ public class AiController {
         return Result.ok(noteVectorService.rebuildUserIndex(UserContext.getUserId()));
     }
 
+    /*
+     * 下面四个接口操作的是**全局**向量索引（一份 simple-vector-store.json 服务所有用户），
+     * 恢复会把所有人的索引一起回退，因此只对运维账号开放，见 IndexAdminGuard。
+     * 注意 /notes/index/status 与 /notes/index/rebuild 不在其中：前者只读自己的统计，
+     * 后者只重建当前用户的切片，都是用户级操作。
+     */
+
     @GetMapping("/notes/index/backups")
     public Result<List<NoteIndexBackupItem>> listIndexBackups() {
+        indexAdminGuard.requireAdmin(UserContext.getUserId());
         return Result.ok(noteVectorService.listIndexBackups(UserContext.getUserId()));
     }
 
     @PostMapping("/notes/index/backups")
     public Result<NoteIndexBackupItem> createIndexBackup() {
+        indexAdminGuard.requireAdmin(UserContext.getUserId());
         return Result.ok(noteVectorService.createIndexBackup(UserContext.getUserId()));
     }
 
     @GetMapping("/notes/index/backups/{fileName}/verify")
     public Result<NoteIndexBackupVerifyResponse> verifyIndexBackup(@PathVariable String fileName) {
+        indexAdminGuard.requireAdmin(UserContext.getUserId());
         return Result.ok(noteVectorService.verifyIndexBackup(UserContext.getUserId(), fileName));
     }
 
     @PostMapping("/notes/index/backups/{fileName}/restore")
     public Result<NoteIndexRestoreResponse> restoreIndexBackup(@PathVariable String fileName) {
+        indexAdminGuard.requireAdmin(UserContext.getUserId());
         return Result.ok(noteVectorService.restoreIndexBackup(UserContext.getUserId(), fileName));
     }
 

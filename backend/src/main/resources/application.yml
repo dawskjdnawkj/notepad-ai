@@ -94,6 +94,12 @@ notepad:
     vector-store-file: ${NOTEPAD_VECTOR_STORE_FILE:./data/simple-vector-store.json}
     # 索引备份保留份数；超出后按最旧优先删除，不影响正在使用的索引文件
     backup-retention: ${NOTEPAD_INDEX_BACKUP_RETENTION:10}
+    index-admin:
+      # 允许操作**全局**向量索引（备份 / 恢复 / 校验）的用户名，逗号分隔。
+      # 索引是全局单例，一次恢复会把所有用户的检索结果一起回退，
+      # 所以这几个接口收敛成运维操作，默认空 = 谁都不能用（fail-closed）。
+      # 部署时指定：NOTEPAD_INDEX_ADMIN_USERNAMES=运维账号
+      usernames: ${NOTEPAD_INDEX_ADMIN_USERNAMES:}
     # 向量存储选型。默认 simple（进程内 SimpleVectorStore），
     # 切到 pgvector 需要额外跑一个带 pgvector 扩展的 PostgreSQL 实例。
     vector-store:
